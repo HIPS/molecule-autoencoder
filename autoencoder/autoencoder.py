@@ -106,7 +106,8 @@ class CheckpointPostAnnealing(ModelCheckpoint):
 def main(training_path,
          parameters,
          weight_file='weights.h5',
-         model_file='model.json'):
+         model_file='model.json',
+         limit=None):
     for key in parameters:
         if type(parameters[key]) in [float, np.ndarray]:
             parameters[key] = np.float(parameters[key])
@@ -121,8 +122,9 @@ def main(training_path,
     start = time.time()
     with open(training_path, 'r') as f:
         smiles = f.readlines()
-
-    smiles = [i.strip() for i in smiles][:5000]
+    smiles = [i.strip() for i in smiles]
+    if limit is not None:
+        smiles = smiles[:limit]
     print('Training set size is', len(smiles))
     smiles = [smile_convert(i) for i in smiles if smile_convert(i)]
     print('Training set size is {}, after filtering to max length of {}'.format(len(smiles), MAX_LEN))
@@ -214,10 +216,17 @@ def main(training_path,
         if parameters['batchnorm_gru']:
             model.add(BatchNormalization(mode=0, axis=-1))
 
-    model.add(TerminalGRU(NCHARS, return_sequences=True,
-                          activation='softmax',
-                          temperature=TEMPERATURE,
-                          dropout_U=parameters['tgru_dropout']))
+    if parameters['terminal_gru']:
+        model.add(TerminalGRU(NCHARS, 
+                              return_sequences=True,
+                              activation='softmax',
+                              temperature=TEMPERATURE,
+                              dropout_U=parameters['tgru_dropout']))
+    else:
+        model.add(GRU(NCHARS, 
+                      return_sequences=True,
+                      activation='softmax',
+                      dropout_U=parameters['tgru_dropout']))
 
     if parameters['optim'] == 'adam':
         optim = Adam(lr=parameters['lr'], beta_1=parameters['momentum'])
@@ -277,4 +286,5 @@ def main(training_path,
 
 if __name__ == "__main__":
     main(training_path=CONFIGS[TRAIN_SET]['file'],
-         parameters=hyperparams.simple_params())
+         parameters=hyperparams.simple_params(),
+         limit=5000) # just train on first 5000 molecules for quick testing.  set to None to use all 250k

@@ -37,7 +37,8 @@ def random_params():
                   'val_split': 0.1,
                   'double_hg': True,
                   'repeat_vector': True,
-                  'temperature': 1.00}
+                  'temperature': 1.00,
+                  'terminal_gru': random.choice([True, False])}
     return parameters
 
 
@@ -62,9 +63,9 @@ def simple_params():
                   'hg_growth_factor': 1,
                   'hidden_dim': 50,
                   'loss': 'categorical_crossentropy',
-                  'lr': 10**random.uniform(-3.6, -2.6),
+                  'lr': 0.001,
                   'middle_layer': random.randint(1, 6),
-                  'momentum': random.uniform(.85, .999),
+                  'momentum': 0.995,
                   'optim': random.choice(['adam']),
                   'rnn_activation': 'tanh',
                   'vae_annealer_start': random.randint(int(EPOCHS / 20), int(EPOCHS / 2)),
@@ -77,6 +78,7 @@ def simple_params():
                   'val_split': 0.1,
                   'double_hg': True,
                   'repeat_vector': True,
-                  'temperature': 1.00
+                  'temperature': 1.00,
+                  'terminal_gru': False
                   }
     return parameters
