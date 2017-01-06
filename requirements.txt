@@ -1,6 +1,4 @@
 git+https://github.com/EderSantana/seya.git
 h5py==2.6.0
 git+https://github.com/rgbombarelli/keras.git
-numpy==1.11.2
-scipy==0.18.1
-Theano==0.8.2
+git+git://github.com/Theano/Theano.git
