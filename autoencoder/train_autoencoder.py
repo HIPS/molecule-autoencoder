@@ -2,6 +2,8 @@ import warnings
 import numpy as np
 from random import shuffle
 import time
+import argparse
+import json
 
 from keras.layers.core import Dense, Flatten, RepeatVector
 from keras.layers.recurrent import GRU
@@ -22,17 +24,7 @@ TRAIN_SET = 'drugs'
 TEMPERATURE = np.array(1.00, dtype=np.float32)
 PADDING = 'right'
 
-CONFIGS = {
-    'drugs': {'file': '../data/250k_rndm_zinc_drugs_clean.smi',
-              'chars': [' ', '#', '(', ')', '+', '-', '/', '1', '2', '3', '4', '5', '6', '7',
-                        '8', '=', '@', 'B', 'C', 'F', 'H', 'I', 'N', 'O', 'P', 'S', '[', '\\', ']',
-                        'c', 'l', 'n', 'o', 'r', 's']},
-}
-
-CHARS = CONFIGS[TRAIN_SET]['chars']
-NCHARS = len(CHARS)
-CHAR_INDICES = dict((c, i) for i, c in enumerate(CHARS))
-INDICES_CHAR = dict((i, c) for i, c in enumerate(CHARS))
+CALLBACK_TEST_SMILES = "c1ccccc1"
 
 
 def smile_convert(string):
@@ -50,23 +42,6 @@ def sample(a, temperature=1.0):
     a = np.log(a) / temperature
     a = np.exp(a) / np.sum(np.exp(a))
     return np.argmax(np.random.multinomial(1, a, 1))
-
-
-class CheckMolecule(Callback):
-    def on_epoch_end(self, epoch, logs={}):
-        test_smiles = ["c1ccccc1"]
-        test_smiles = [smile_convert(i) for i in test_smiles]
-        Z = np.zeros((len(test_smiles), MAX_LEN, NCHARS), dtype=np.bool)
-        for i, smile in enumerate(test_smiles):
-            for t, char in enumerate(smile):
-                Z[i, t, CHAR_INDICES[char]] = 1
-
-        string = ""
-        for i in self.model.predict(Z):
-            for j in i:
-                index = sample(j, TEMPERATURE)
-                string += INDICES_CHAR[index]
-        print("\n" + string)
 
 
 class CheckpointPostAnnealing(ModelCheckpoint):
@@ -103,10 +78,11 @@ class CheckpointPostAnnealing(ModelCheckpoint):
                 self.model.save_weights(filepath, overwrite=True)
 
 
-def main(training_path,
+def main(train_file,
+         char_file,
          parameters,
-         weight_file='weights.h5',
-         model_file='model.json',
+         weight_file,
+         model_file,
          limit=None):
     for key in parameters:
         if type(parameters[key]) in [float, np.ndarray]:
@@ -120,7 +96,7 @@ def main(training_path,
         return float(1 / (1. + np.exp(slope * (start - float(x)))))
 
     start = time.time()
-    with open(training_path, 'r') as f:
+    with open(train_file, 'r') as f:
         smiles = f.readlines()
     smiles = [i.strip() for i in smiles]
     if limit is not None:
@@ -130,13 +106,34 @@ def main(training_path,
     print('Training set size is {}, after filtering to max length of {}'.format(len(smiles), MAX_LEN))
     shuffle(smiles)
 
-    print(('total chars:', NCHARS))
+    char_list = json.load(open(char_file))
+    n_chars = len(char_list)
+    char_to_index = dict((c, i) for i, c in enumerate(char_list))
+    index_to_char = dict((i, c) for i, c in enumerate(char_list))
 
-    X = np.zeros((len(smiles), MAX_LEN, NCHARS), dtype=np.float32)
+    class CheckMolecule(Callback):
+        def on_epoch_end(self, epoch, logs={}):
+            test_smiles = [CALLBACK_TEST_SMILES]
+            test_smiles = [smile_convert(i) for i in test_smiles]
+            Z = np.zeros((len(test_smiles), MAX_LEN, n_chars), dtype=np.bool)
+            for i, smile in enumerate(test_smiles):
+                for t, char in enumerate(smile):
+                    Z[i, t, char_to_index[char]] = 1
+
+            string = ""
+            for i in self.model.predict(Z):
+                for j in i:
+                    index = sample(j, TEMPERATURE)
+                    string += index_to_char[index]
+            print("\n callback guess: " + string)
+
+    print('total chars: {}'.format(n_chars))
+
+    X = np.zeros((len(smiles), MAX_LEN, n_chars), dtype=np.float32)
 
     for i, smile in enumerate(smiles):
         for t, char in enumerate(smile):
-            X[i, t, CHAR_INDICES[char]] = 1
+            X[i, t, char_to_index[char]] = 1
 
     model = Sequential()
 
@@ -146,7 +143,7 @@ def main(training_path,
                                     parameters['conv_d_growth_factor']),
                                 int(parameters['conv_dim_width'] *
                                     parameters['conv_w_growth_factor']),
-                                batch_input_shape=(parameters['batch_size'], MAX_LEN, NCHARS),
+                                batch_input_shape=(parameters['batch_size'], MAX_LEN, n_chars),
                                 activation=parameters['conv_activation']))
 
         if parameters['batchnorm_conv']:
@@ -171,7 +168,7 @@ def main(training_path,
     else:
         for k in range(parameters['gru_depth'] - 1):
             model.add(GRU(parameters['recurrent_dim'], return_sequences=True,
-                          batch_input_shape=(parameters['batch_size'], MAX_LEN, NCHARS),
+                          batch_input_shape=(parameters['batch_size'], MAX_LEN, n_chars),
                           activation=parameters['rnn_activation']))
             if parameters['batchnorm_gru']:
                 model.add(BatchNormalization(mode=0, axis=-1))
@@ -217,13 +214,13 @@ def main(training_path,
             model.add(BatchNormalization(mode=0, axis=-1))
 
     if parameters['terminal_gru']:
-        model.add(TerminalGRU(NCHARS, 
+        model.add(TerminalGRU(n_chars, 
                               return_sequences=True,
                               activation='softmax',
                               temperature=TEMPERATURE,
                               dropout_U=parameters['tgru_dropout']))
     else:
-        model.add(GRU(NCHARS, 
+        model.add(GRU(n_chars, 
                       return_sequences=True,
                       activation='softmax',
                       dropout_U=parameters['tgru_dropout']))
@@ -241,8 +238,6 @@ def main(training_path,
 
     json_string = model.to_json()
     open(model_file, 'w').write(json_string)
-
-    print(parameters)
 
     # CALLBACK
     smile_checker = CheckMolecule()
@@ -285,6 +280,22 @@ def main(training_path,
 
 
 if __name__ == "__main__":
-    main(training_path=CONFIGS[TRAIN_SET]['file'],
+    parser = argparse.ArgumentParser(description='Sample a trained autoencoder.')
+    parser.add_argument('train_file', type=str,
+                        help='a file path with list of smiles strings')
+    parser.add_argument('char_file', type=str,
+                        help='a file path of a char index json')
+    parser.add_argument('--weight_file', type=str, default='weights.h5',
+                        help='a file path where to write weights')
+    parser.add_argument('--model_file', type=str, default='model.json',
+                        help='a file path where to write models')
+    parser.add_argument('--limit', '-l', type=int, default=5000,
+                        help='limit test data to this count')
+    args = parser.parse_args()
+
+    main(train_file=args.train_file,
+         char_file=args.char_file,
          parameters=hyperparams.simple_params(),
-         limit=5000) # just train on first 5000 molecules for quick testing.  set to None to use all 250k
+         weight_file=args.weight_file,
+         model_file=args.model_file,
+         limit=args.limit) # just train on first 5000 molecules for quick testing.  set to None to use all 250k
